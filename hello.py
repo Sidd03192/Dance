@@ -59,6 +59,7 @@ def display_preprocessed_landmarks(video_path, landmarks_path):
     mp_pose = mp.solutions.pose
     mp_drawing = mp.solutions.drawing_utils
     mp_drawing_styles = mp.solutions.drawing_styles
+    from mediapipe.framework.formats import landmark_pb2  # Import required for LandmarkList
     
     # Prepare frame counter
     current_frame = 0
@@ -74,22 +75,20 @@ def display_preprocessed_landmarks(video_path, landmarks_path):
         
         # If landmarks exist, draw them
         if frame_landmarks is not None:
-            # Create a landmarks object
-            landmarks = mp_pose.Landmark()
-            landmarks.landmark = []
-            
-            for x, y, z, visibility in frame_landmarks:
-                landmark = mp_pose.Landmark()
-                landmark.x = x
-                landmark.y = y
-                landmark.z = z
-                landmark.visibility = visibility
-                landmarks.landmark.append(landmark)
+            # Create a NormalizedLandmarkList object
+            landmark_list = landmark_pb2.NormalizedLandmarkList(
+                landmark=[
+                    landmark_pb2.NormalizedLandmark(
+                        x=x, y=y, z=z, visibility=visibility
+                    )
+                    for x, y, z, visibility in frame_landmarks
+                ]
+            )
             
             # Draw landmarks
             mp_drawing.draw_landmarks(
                 frame, 
-                landmarks, 
+                landmark_list, 
                 mp_pose.POSE_CONNECTIONS,
                 landmark_drawing_spec=mp_drawing_styles.get_default_pose_landmarks_style()
             )
