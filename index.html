@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MediaPipe Pose Estimation</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    
+    .container {
+      position: relative;
+      margin-bottom: 20px;
+    }
+    
+    canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+    }
+    
+    #controls {
+      margin-top: 10px;
+      padding: 15px;
+      background-color: #f5f5f5;
+      border-radius: 5px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    
+    button {
+      padding: 8px 16px;
+      background-color: #4285f4;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    
+    button:hover {
+      background-color: #356ac3;
+    }
+    
+    .settings {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+    
+    /* New styles for data display */
+    #data-display {
+      width: 640px;
+      margin-top: 20px;
+      padding: 15px;
+      background-color: #f5f5f5;
+      border-radius: 5px;
+      font-family: monospace;
+      max-height: 300px;
+      overflow-y: auto;
+    }
+    
+    .data-section {
+      margin-bottom: 15px;
+    }
+    
+    .data-section h3 {
+      margin-top: 0;
+      margin-bottom: 8px;
+      font-size: 16px;
+    }
+    
+    .data-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+    }
+    
+    .data-item {
+      background-color: #e0e0e0;
+      padding: 5px;
+      border-radius: 3px;
+      font-size: 12px;
+    }
+    
+    .angle-data {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 10px;
+    }
+  </style>
+</head>
+<body>
+  <h1>MediaPipe Pose Estimation</h1>
+  
+  <div class="container">
+    <video id="input-video" width="640" height="480" autoplay playsinline></video>
+    <canvas id="output-canvas" width="640" height="480"></canvas>
+  </div>
+  
+  <div id="controls">
+    <div class="settings">
+      <label for="model-complexity">Model Complexity:</label>
+      <select id="model-complexity">
+        <option value="0">Light (Faster)</option>
+        <option value="1" selected>Medium</option>
+        <option value="2">Heavy (More accurate)</option>
+      </select>
+    </div>
+    <div class="settings">
+      <label for="smooth-landmarks">Smooth Landmarks:</label>
+      <input type="checkbox" id="smooth-landmarks" checked>
+    </div>
+    <div class="settings">
+      <label for="min-detection-confidence">Min Detection Confidence:</label>
+      <input type="range" id="min-detection-confidence" min="0" max="1" step="0.01" value="0.5">
+      <span id="detection-confidence-value">0.5</span>
+    </div>
+    <div class="settings">
+      <label for="min-tracking-confidence">Min Tracking Confidence:</label>
+      <input type="range" id="min-tracking-confidence" min="0" max="1" step="0.01" value="0.5">
+      <span id="tracking-confidence-value">0.5</span>
+    </div>
+    <div class="settings">
+      <label for="show-data">Show Data:</label>
+      <input type="checkbox" id="show-data" checked>
+    </div>
+    <button id="toggle-camera">Start Camera</button>
+  </div>
+
+  <div id="status">Loading MediaPipe...</div>
+  
+  <!-- New data display section -->
+  <div id="data-display">
+    <div class="data-section">
+      <h3>Key Points (x, y, z)</h3>
+      <div id="landmarks-data" class="data-grid"></div>
+    </div>
+    <div class="data-section">
+      <h3>Key Angles</h3>
+      <div id="angles-data" class="angle-data"></div>
+    </div>
+  </div>
+
+  <!-- Load the MediaPipe libraries correctly -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+  
+  <script>
+    // DOM elements
+    const videoElement = document.getElementById('input-video');
+    const canvasElement = document.getElementById('output-canvas');
+    const canvasCtx = canvasElement.getContext('2d');
+    const toggleCameraButton = document.getElementById('toggle-camera');
+    const statusDiv = document.getElementById('status');
+    const modelComplexitySelect = document.getElementById('model-complexity');
+    const smoothLandmarksCheckbox = document.getElementById('smooth-landmarks');
+    const minDetectionConfidenceInput = document.getElementById('min-detection-confidence');
+    const minTrackingConfidenceInput = document.getElementById('min-tracking-confidence');
+    const detectionConfidenceValue = document.getElementById('detection-confidence-value');
+    const trackingConfidenceValue = document.getElementById('tracking-confidence-value');
+    const showDataCheckbox = document.getElementById('show-data');
+    const dataDisplayDiv = document.getElementById('data-display');
+    const landmarksDataDiv = document.getElementById('landmarks-data');
+    const anglesDataDiv = document.getElementById('angles-data');
+    
+    // Landmark names for better readability
+    const LANDMARK_NAMES = [
+      'nose', 'left_eye_inner', 'left_eye', 'left_eye_outer',
+      'right_eye_inner', 'right_eye', 'right_eye_outer',
+      'left_ear', 'right_ear', 'mouth_left', 'mouth_right',
+      'left_shoulder', 'right_shoulder', 'left_elbow', 'right_elbow',
+      'left_wrist', 'right_wrist', 'left_pinky', 'right_pinky',
+      'left_index', 'right_index', 'left_thumb', 'right_thumb',
+      'left_hip', 'right_hip', 'left_knee', 'right_knee',
+      'left_ankle', 'right_ankle', 'left_heel', 'right_heel',
+      'left_foot_index', 'right_foot_index'
+    ];
+    
+    // Define key angles to calculate
+    const KEY_ANGLES = [
+      { name: 'Left Elbow', points: [11, 13, 15] }, // Left shoulder, elbow, wrist
+      { name: 'Right Elbow', points: [12, 14, 16] }, // Right shoulder, elbow, wrist
+      { name: 'Left Shoulder', points: [13, 11, 23] }, // Left elbow, shoulder, hip
+      { name: 'Right Shoulder', points: [14, 12, 24] }, // Right elbow, shoulder, hip
+      { name: 'Left Hip', points: [11, 23, 25] }, // Left shoulder, hip, knee
+      { name: 'Right Hip', points: [12, 24, 26] }, // Right shoulder, hip, knee
+      { name: 'Left Knee', points: [23, 25, 27] }, // Left hip, knee, ankle
+      { name: 'Right Knee', points: [24, 26, 28] }  // Right hip, knee, ankle
+    ];
+    
+    // State variables
+    let pose;
+    let camera = null;
+    let isProcessing = false;
+    
+    // Update displayed confidence values
+    minDetectionConfidenceInput.addEventListener('input', (e) => {
+      detectionConfidenceValue.textContent = e.target.value;
+    });
+    
+    minTrackingConfidenceInput.addEventListener('input', (e) => {
+      trackingConfidenceValue.textContent = e.target.value;
+    });
+    
+    // Toggle data display visibility
+    showDataCheckbox.addEventListener('change', () => {
+      dataDisplayDiv.style.display = showDataCheckbox.checked ? 'block' : 'none';
+    });
+    
+    // Toggle camera
+    toggleCameraButton.addEventListener('click', () => {
+      if (camera) {
+        stopCamera();
+        toggleCameraButton.textContent = 'Start Camera';
+      } else {
+        startCamera();
+        toggleCameraButton.textContent = 'Stop Camera';
+      }
+    });
+    
+    // Calculate angle between three points
+    function calculateAngle(a, b, c) {
+      const ab = { x: b.x - a.x, y: b.y - a.y, z: b.z - a.z };
+      const bc = { x: c.x - b.x, y: c.y - b.y, z: c.z - b.z };
+      
+      // Calculate dot product
+      const dotProduct = ab.x * bc.x + ab.y * bc.y + ab.z * bc.z;
+      
+      // Calculate magnitudes
+      const magnitudeAB = Math.sqrt(ab.x * ab.x + ab.y * ab.y + ab.z * ab.z);
+      const magnitudeBC = Math.sqrt(bc.x * bc.x + bc.y * bc.y + bc.z * bc.z);
+      
+      // Calculate angle in radians
+      const angle = Math.acos(dotProduct / (magnitudeAB * magnitudeBC));
+      
+      // Convert to degrees
+      return Math.round((angle * 180) / Math.PI);
+    }
+    
+    // Initialize MediaPipe Pose
+    async function initializePose() {
+      try {
+        statusDiv.textContent = 'Loading MediaPipe Pose...';
+        
+        pose = new Pose({
+          locateFile: (file) => {
+            return `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`;
+          }
+        });
+        
+        updatePoseConfig();
+        
+        pose.onResults(onResults);
+        
+        // Set initial visibility of data display
+        dataDisplayDiv.style.display = showDataCheckbox.checked ? 'block' : 'none';
+        
+        statusDiv.textContent = 'MediaPipe Pose loaded. Click "Start Camera" to begin.';
+      } catch (error) {
+        statusDiv.textContent = `Error initializing MediaPipe Pose: ${error.message}`;
+        console.error('Error initializing MediaPipe Pose:', error);
+      }
+    }
+    
+    // Update pose configuration based on UI settings
+    function updatePoseConfig() {
+      pose.setOptions({
+        modelComplexity: parseInt(modelComplexitySelect.value),
+        smoothLandmarks: smoothLandmarksCheckbox.checked,
+        minDetectionConfidence: parseFloat(minDetectionConfidenceInput.value),
+        minTrackingConfidence: parseFloat(minTrackingConfidenceInput.value)
+      });
+    }
+    
+    // Add event listeners for config changes
+    modelComplexitySelect.addEventListener('change', updatePoseConfig);
+    smoothLandmarksCheckbox.addEventListener('change', updatePoseConfig);
+    minDetectionConfidenceInput.addEventListener('change', updatePoseConfig);
+    minTrackingConfidenceInput.addEventListener('change', updatePoseConfig);
+    
+    // Start camera
+    async function startCamera() {
+      try {
+        statusDiv.textContent = 'Requesting camera access...';
+        const constraints = {
+          video: {
+            width: { ideal: 640 },
+            height: { ideal: 480 }
+          }
+        };
+        
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        videoElement.srcObject = stream;
+        
+        camera = new Camera(videoElement, {
+          onFrame: async () => {
+            if (!isProcessing) {
+              isProcessing = true;
+              await pose.send({ image: videoElement });
+              isProcessing = false;
+            }
+          },
+          width: 640,
+          height: 480
+        });
+        
+        camera.start();
+        statusDiv.textContent = 'Camera started. Processing video...';
+      } catch (error) {
+        statusDiv.textContent = `Error accessing camera: ${error.message}`;
+        console.error('Error accessing camera:', error);
+      }
+    }
+    
+    // Stop camera
+    function stopCamera() {
+      if (camera) {
+        camera.stop();
+        camera = null;
+        
+        if (videoElement.srcObject) {
+          videoElement.srcObject.getTracks().forEach(track => track.stop());
+          videoElement.srcObject = null;
+        }
+        
+        // Clear canvas
+        canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+        
+        // Clear data display
+        landmarksDataDiv.innerHTML = '';
+        anglesDataDiv.innerHTML = '';
+        
+        statusDiv.textContent = 'Camera stopped.';
+      }
+    }
+    
+    // Update data display with landmark coordinates
+    function updateLandmarksData(poseLandmarks) {
+      landmarksDataDiv.innerHTML = '';
+      
+      // Display key landmarks (you can modify this to show only the ones you care about)
+      const keyLandmarkIndices = [0, 11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28]; // Nose, shoulders, elbows, wrists, hips, knees, ankles
+      
+      keyLandmarkIndices.forEach(index => {
+        const landmark = poseLandmarks[index];
+        const name = LANDMARK_NAMES[index];
+        
+        const div = document.createElement('div');
+        div.className = 'data-item';
+        div.textContent = `${name}: (${landmark.x.toFixed(2)}, ${landmark.y.toFixed(2)}, ${landmark.z.toFixed(2)})`;
+        landmarksDataDiv.appendChild(div);
+      });
+    }
+    
+    // Update data display with angle calculations
+    function updateAnglesData(poseLandmarks) {
+      anglesDataDiv.innerHTML = '';
+      
+      KEY_ANGLES.forEach(angleConfig => {
+        if (poseLandmarks[angleConfig.points[0]] && 
+            poseLandmarks[angleConfig.points[1]] && 
+            poseLandmarks[angleConfig.points[2]]) {
+          
+          const angle = calculateAngle(
+            poseLandmarks[angleConfig.points[0]],
+            poseLandmarks[angleConfig.points[1]],
+            poseLandmarks[angleConfig.points[2]]
+          );
+          
+          const div = document.createElement('div');
+          div.className = 'data-item';
+          div.textContent = `${angleConfig.name}: ${angle}°`;
+          anglesDataDiv.appendChild(div);
+        }
+      });
+    }
+    
+    // Process results from pose estimation
+    function onResults(results) {
+      // Clear canvas
+      canvasCtx.save();
+      canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+      
+      // Draw the video frame
+      canvasCtx.drawImage(
+        results.image, 0, 0, canvasElement.width, canvasElement.height);
+      
+      // Draw pose landmarks
+      if (results.poseLandmarks) {
+        // Draw the pose landmarks
+        drawConnectors(canvasCtx, results.poseLandmarks, POSE_CONNECTIONS,
+                      {color: '#00FF00', lineWidth: 2});
+        drawLandmarks(canvasCtx, results.poseLandmarks,
+                      {color: '#FF0000', lineWidth: 1, radius: 3});
+        
+        // Update data display if it's visible
+        if (showDataCheckbox.checked) {
+          updateLandmarksData(results.poseLandmarks);
+          updateAnglesData(results.poseLandmarks);
+        }
+      }
+      
+      canvasCtx.restore();
+    }
+    
+    // Initialize when page loads
+    window.addEventListener('load', () => {
+      if (typeof Pose === 'undefined') {
+        statusDiv.textContent = 'Error: MediaPipe Pose library not loaded. Please check your internet connection.';
+      } else {
+        initializePose();
+      }
+    });
+  </script>
+</body>
+</html>
