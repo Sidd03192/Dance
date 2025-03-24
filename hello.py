@@ -1,7 +1,7 @@
 import cv2
 import mediapipe as mp
-import numpy as np
 import pickle
+from mediapipe.framework.formats import landmark_pb2  # Import required for LandmarkList
 
 def preprocess_video_landmarks(video_path, output_path):
     # Initialize MediaPipe Pose
@@ -47,35 +47,36 @@ def preprocess_video_landmarks(video_path, output_path):
     print(f"Processed {len(all_landmarks)} frames. Landmarks saved to {output_path}")
     video.release()
 
-def display_preprocessed_landmarks(video_path, landmarks_path):
+def display_preprocessed_landmarks_and_webcam(video_path, landmarks_path):
     # Load preprocessed landmarks
     with open(landmarks_path, 'rb') as f:
         all_landmarks = pickle.load(f)
     
-    # Initialize video capture
+    # Initialize video and webcam capture
     video = cv2.VideoCapture(video_path)
+    webcam = cv2.VideoCapture(0)  # Open the webcam
     
-    # Initialize MediaPipe drawing utilities
+    # Initialize MediaPipe Pose and drawing utilities
     mp_pose = mp.solutions.pose
+    pose = mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5)
     mp_drawing = mp.solutions.drawing_utils
     mp_drawing_styles = mp.solutions.drawing_styles
-    from mediapipe.framework.formats import landmark_pb2  # Import required for LandmarkList
     
     # Prepare frame counter
     current_frame = 0
     
     while True:
-        # Read frame
-        success, frame = video.read()
-        if not success:
+        # Read frames from video and webcam
+        success_video, frame_video = video.read()
+        success_webcam, frame_webcam = webcam.read()
+        if not success_video or not success_webcam:
             break
         
-        # Get corresponding landmarks
+        # Get corresponding landmarks for video
         frame_landmarks = all_landmarks[current_frame]
         
-        # If landmarks exist, draw them
+        # If landmarks exist, draw them on the video frame
         if frame_landmarks is not None:
-            # Create a NormalizedLandmarkList object
             landmark_list = landmark_pb2.NormalizedLandmarkList(
                 landmark=[
                     landmark_pb2.NormalizedLandmark(
@@ -84,22 +85,35 @@ def display_preprocessed_landmarks(video_path, landmarks_path):
                     for x, y, z, visibility in frame_landmarks
                 ]
             )
-            
-            # Draw landmarks
             mp_drawing.draw_landmarks(
-                frame, 
+                frame_video, 
                 landmark_list, 
                 mp_pose.POSE_CONNECTIONS,
                 landmark_drawing_spec=mp_drawing_styles.get_default_pose_landmarks_style()
             )
         
-        # Display frame
-        cv2.imshow('Preprocessed Pose', frame)
+        # Process webcam frame for landmarks
+        rgb_frame_webcam = cv2.cvtColor(frame_webcam, cv2.COLOR_BGR2RGB)
+        results_webcam = pose.process(rgb_frame_webcam)
+        
+        # Draw landmarks on the webcam frame if detected
+        if results_webcam.pose_landmarks:
+            mp_drawing.draw_landmarks(
+                frame_webcam,
+                results_webcam.pose_landmarks,
+                mp_pose.POSE_CONNECTIONS,
+                landmark_drawing_spec=mp_drawing_styles.get_default_pose_landmarks_style()
+            )
+        
+        # Display both frames
+        cv2.imshow('Preprocessed Pose (Video)', frame_video)
+        cv2.imshow('Live Webcam Pose', frame_webcam)
         
         # Break on 'q' key
         if cv2.waitKey(30) & 0xFF == ord('q'):
             break
         
+        # Increment frame counter
         current_frame += 1
         if current_frame >= len(all_landmarks):
             current_frame = 0
@@ -107,6 +121,7 @@ def display_preprocessed_landmarks(video_path, landmarks_path):
     
     # Clean up
     video.release()
+    webcam.release()
     cv2.destroyAllWindows()
 
 # Example usage
@@ -116,5 +131,5 @@ landmarks_path = "./preprocessed_landmarks.pkl"
 # Step 1: Preprocess landmarks (run once)
 preprocess_video_landmarks(video_path, landmarks_path)
 
-# Step 2: Display preprocessed landmarks
-display_preprocessed_landmarks(video_path, landmarks_path)
+# Step 2: Display preprocessed landmarks with webcam feed
+display_preprocessed_landmarks_and_webcam(video_path, landmarks_path)
