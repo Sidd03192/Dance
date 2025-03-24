@@ -19,6 +19,7 @@ def preprocess_video_landmarks(video_path, output_path):
     # Prepare to store landmarks
     all_landmarks = []
     frame_count = int(video.get(cv2.CAP_PROP_FRAME_COUNT))
+    print(frame_count)
     
     # Process each frame
     for _ in range(frame_count):
