@@ -1,6 +1,7 @@
 import cv2
 import mediapipe as mp
 import pickle
+import numpy as np
 from mediapipe.framework.formats import landmark_pb2  # Import required for LandmarkList
 
 def preprocess_video_landmarks(video_path, output_path):
@@ -11,7 +12,6 @@ def preprocess_video_landmarks(video_path, output_path):
     # Open video
     video = cv2.VideoCapture(video_path)
     
-    # Check if video opened successfully
     if not video.isOpened():
         print(f"Error: Could not open video file {video_path}")
         return
@@ -19,7 +19,6 @@ def preprocess_video_landmarks(video_path, output_path):
     # Prepare to store landmarks
     all_landmarks = []
     frame_count = int(video.get(cv2.CAP_PROP_FRAME_COUNT))
-    print(frame_count)
     
     # Process each frame
     for _ in range(frame_count):
@@ -35,7 +34,6 @@ def preprocess_video_landmarks(video_path, output_path):
         
         # Store landmarks (or None if no detection)
         if results.pose_landmarks:
-            # Convert landmarks to list of (x, y, z, visibility)
             landmark_data = [(lm.x, lm.y, lm.z, lm.visibility) for lm in results.pose_landmarks.landmark]
             all_landmarks.append(landmark_data)
         else:
@@ -48,7 +46,31 @@ def preprocess_video_landmarks(video_path, output_path):
     print(f"Processed {len(all_landmarks)} frames. Landmarks saved to {output_path}")
     video.release()
 
-def display_preprocessed_landmarks_and_webcam(video_path, landmarks_path):
+def calculate_similarity(landmarks1, landmarks2):
+    """
+    Calculates similarity between two sets of landmarks.
+    Returns a score where lower values indicate more similarity.
+    Normalizes distances by skeleton size.
+    """
+    if landmarks1 is None or landmarks2 is None:
+        return None
+
+    lm1 = np.array(landmarks1)[:, :3]  # Exclude visibility
+    lm2 = np.array(landmarks2)[:, :3]
+
+    # Compute pairwise distances
+    distances = np.linalg.norm(lm1 - lm2, axis=1)
+
+    # Normalize by skeleton size (shoulder width)
+    skeleton_size = np.linalg.norm(lm1[11] - lm1[12])  # Shoulders (landmarks 11 and 12)
+    if skeleton_size > 0:
+        distances /= skeleton_size
+
+    mean_distance = np.mean(distances)
+    return mean_distance
+
+
+def display_preprocessed_landmarks_and_webcam_with_comparison(video_path, landmarks_path):
     # Load preprocessed landmarks
     with open(landmarks_path, 'rb') as f:
         all_landmarks = pickle.load(f)
@@ -70,13 +92,15 @@ def display_preprocessed_landmarks_and_webcam(video_path, landmarks_path):
         # Read frames from video and webcam
         success_video, frame_video = video.read()
         success_webcam, frame_webcam = webcam.read()
+        frame_webcam = cv2.flip(frame_webcam, 1)
+
         if not success_video or not success_webcam:
             break
         
         # Get corresponding landmarks for video
         frame_landmarks = all_landmarks[current_frame]
         
-        # If landmarks exist, draw them on the video frame
+        # Draw preprocessed landmarks on video frame
         if frame_landmarks is not None:
             landmark_list = landmark_pb2.NormalizedLandmarkList(
                 landmark=[
@@ -97,8 +121,21 @@ def display_preprocessed_landmarks_and_webcam(video_path, landmarks_path):
         rgb_frame_webcam = cv2.cvtColor(frame_webcam, cv2.COLOR_BGR2RGB)
         results_webcam = pose.process(rgb_frame_webcam)
         
-        # Draw landmarks on the webcam frame if detected
+        # Extract webcam landmarks for comparison
         if results_webcam.pose_landmarks:
+            webcam_landmarks = [
+                (lm.x, lm.y, lm.z, lm.visibility)
+                for lm in results_webcam.pose_landmarks.landmark
+            ]
+            
+            # Compute similarity
+            similarity = calculate_similarity(frame_landmarks, webcam_landmarks)
+            if similarity is not None:
+                # Display similarity score on webcam feed
+                cv2.putText(frame_webcam, f"Similarity: {similarity:.2f}", (10, 50),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2, cv2.LINE_AA)
+            
+            # Draw landmarks on webcam frame
             mp_drawing.draw_landmarks(
                 frame_webcam,
                 results_webcam.pose_landmarks,
@@ -132,5 +169,5 @@ landmarks_path = "./preprocessed_landmarks.pkl"
 # Step 1: Preprocess landmarks (run once)
 preprocess_video_landmarks(video_path, landmarks_path)
 
-# Step 2: Display preprocessed landmarks with webcam feed
-display_preprocessed_landmarks_and_webcam(video_path, landmarks_path)
+# Step 2: Compare live feed with recorded video
+display_preprocessed_landmarks_and_webcam_with_comparison(video_path, landmarks_path)
