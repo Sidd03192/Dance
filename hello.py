@@ -47,27 +47,25 @@ def preprocess_video_landmarks(video_path, output_path):
     video.release()
 
 def calculate_similarity(landmarks1, landmarks2):
-    """
-    Calculates similarity between two sets of landmarks.
-    Returns a score where lower values indicate more similarity.
-    Normalizes distances by skeleton size.
-    """
-    if landmarks1 is None or landmarks2 is None:
-        return None
+    if len(landmarks1) != len(landmarks2):
+        raise ValueError("Landmark lists must have the same length")
 
-    lm1 = np.array(landmarks1)[:, :3]  # Exclude visibility
-    lm2 = np.array(landmarks2)[:, :3]
+    total_distance = 0
+    for lm1, lm2 in zip(landmarks1, landmarks2):
+        x1, y1, z1, _ = lm1
+        x2, y2, z2, _ = lm2
+        distance = ((x2 - x1)**2 + (y2 - y1)**2 + (z2 - z1)**2)**0.5
+        total_distance += distance
 
-    # Compute pairwise distances
-    distances = np.linalg.norm(lm1 - lm2, axis=1)
+    average_distance = total_distance / len(landmarks1)
+    similarity_score = 1 / (1 + average_distance)
 
-    # Normalize by skeleton size (shoulder width)
-    skeleton_size = np.linalg.norm(lm1[11] - lm1[12])  # Shoulders (landmarks 11 and 12)
-    if skeleton_size > 0:
-        distances /= skeleton_size
+    # Debug prints
+    print(f"Total distance: {total_distance}")
+    print(f"Average distance: {average_distance}")
+    print(f"Similarity score: {similarity_score}")
 
-    mean_distance = np.mean(distances)
-    return mean_distance
+    return similarity_score
 
 
 def display_preprocessed_landmarks_and_webcam_with_comparison(video_path, landmarks_path):
@@ -98,7 +96,7 @@ def display_preprocessed_landmarks_and_webcam_with_comparison(video_path, landma
             break
         
         # Get corresponding landmarks for video
-        frame_landmarks = all_landmarks[current_frame]
+        frame_landmarks = all_landmarks[current_frame] 
         
         # Draw preprocessed landmarks on video frame
         if frame_landmarks is not None:
@@ -130,6 +128,8 @@ def display_preprocessed_landmarks_and_webcam_with_comparison(video_path, landma
             
             # Compute similarity
             similarity = calculate_similarity(frame_landmarks, webcam_landmarks)
+            print ( webcam_landmarks)
+            print (frame_landmarks)
             if similarity is not None:
                 # Display similarity score on webcam feed
                 cv2.putText(frame_webcam, f"Similarity: {similarity:.2f}", (10, 50),
@@ -142,7 +142,8 @@ def display_preprocessed_landmarks_and_webcam_with_comparison(video_path, landma
                 mp_pose.POSE_CONNECTIONS,
                 landmark_drawing_spec=mp_drawing_styles.get_default_pose_landmarks_style()
             )
-        
+        else:
+            print("No pose landmarks found in webcam frame")
         # Display both frames
         cv2.imshow('Preprocessed Pose (Video)', frame_video)
         cv2.imshow('Live Webcam Pose', frame_webcam)
