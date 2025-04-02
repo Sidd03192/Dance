@@ -47,28 +47,17 @@ def preprocess_video_landmarks(video_path, output_path):
     video.release()
 
 def calculate_angle(a, b, c):
-    """
-    Calculate the angle between three points
-    Parameters:
-    a, b, c - tuples/lists with coordinates (x, y)
-    where b is the center point (vertex)
-    """
-    a = np.array([a[0], a[1]])
-    b = np.array([b[0], b[1]])
-    c = np.array([c[0], c[1]])
-    
-    # Create vectors
-    ba = a - b
-    bc = c - b
-    
-    # Calculate dot product
-    cosine_angle = np.dot(ba, bc) / (np.linalg.norm(ba) * np.linalg.norm(bc))
-    cosine_angle = np.clip(cosine_angle, -1.0, 1.0)  # Ensure value is within valid range
-    
-    # Calculate angle in degrees
-    angle = np.degrees(np.arccos(cosine_angle))
-    
-    return angle
+    # Calculate the angle at point b given points a, b, and c
+    ba = (a[0] - b[0], a[1] - b[1])
+    bc = (c[0] - b[0], c[1] - b[1])
+    dot_product = ba[0] * bc[0] + ba[1] * bc[1]
+    magnitude_ba = math.sqrt(ba[0]**2 + ba[1]**2)
+    magnitude_bc = math.sqrt(bc[0]**2 + bc[1]**2)
+    if magnitude_ba * magnitude_bc == 0:
+        return 0  
+    cosine_angle = dot_product / (magnitude_ba * magnitude_bc)
+    return math.degrees(math.acos(max(-1, min(1, cosine_angle))))
+
 
 def calculate_similarity(landmarks1, landmarks2):
     if landmarks1 is None or landmarks2 is None:
@@ -104,7 +93,7 @@ def calculate_similarity(landmarks1, landmarks2):
             distance = ((x2 - x1)**2 + (y2 - y1)**2 + (z2 - z1)**2)**0.5
             position_diffs.append(distance)
     
-    # Calculate angle differences
+    # Calc angle differences
     angle_diffs = []
     for a_idx, b_idx, c_idx in important_angles:
         # Check if landmarks are available and visible
@@ -138,7 +127,7 @@ def calculate_similarity(landmarks1, landmarks2):
         
         # Non-linear transformation for position similarity
         # Gaussian function to create a bell curve effect
-        position_similarity = np.exp(-5 * avg_position_diff**2)
+        position_similarity = np.exp(-2 * avg_position_diff**2)
         
         # Non-linear transformation for angle similarity
         # Sigmoid-like behavior here too. 
@@ -146,7 +135,7 @@ def calculate_similarity(landmarks1, landmarks2):
         angle_similarity = 1 / (1 + np.exp(10 * (normalized_angle_diff - 0.3)))
         
         # Weight the two scores (angle is more important for motion comparison)
-        final_similarity = 0.4 * position_similarity + 0.6 * angle_similarity
+        final_similarity = 0.5 * position_similarity + 0.5 * angle_similarity
         
         # Debugzzz
         print(f"Position similarity: {position_similarity:.4f}")
