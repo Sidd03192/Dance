@@ -3,6 +3,39 @@ import mediapipe as mp
 import pickle
 import numpy as np
 from mediapipe.framework.formats import landmark_pb2  # Import required for LandmarkList
+# import pytorch
+
+import math
+
+limbs = [[11, 13, 21, 15, 17, 19], [12, 14, 22, 16, 18, 20], [24, 26, 28, 32, 30], [23, 25, 27, 29, 31]]
+
+def collect_bearings(landmark_data):
+    limb_bearings = []
+    for limb_i, limb in enumerate(limbs):
+        limb_bearings.append([])
+        for i in range(len(limb)):
+            for j in range(i+1, len(limb)):
+                node1 = limb[i]
+                node2 = limb[j]
+                limb_bearings[limb_i].append(get_bearing(landmark_data[node1], landmark_data[node2]))   
+    return limb_bearings
+
+def get_bearing(l1, l2):
+    x1, y1 = l1[0], l1[1]  # Extract x, y from tuple
+    x2, y2 = l2[0], l2[1]  # Extract x, y from tuple
+    return calculate_bearing(x1, y1, x2, y2)
+
+def calculate_bearing(x1, y1, x2, y2):
+    delta_x = x2 - x1
+    delta_y = y2 - y1
+    
+    # Calculate angle in degrees
+    theta = math.degrees(math.atan2(delta_x, delta_y))
+    
+    # Convert to compass bearing
+    bearing = (90 - theta) % 360
+    
+    return bearing
 
 def preprocess_video_landmarks(video_path, output_path):
     # Initialize MediaPipe Pose
@@ -11,13 +44,14 @@ def preprocess_video_landmarks(video_path, output_path):
 
     # Open video
     video = cv2.VideoCapture(video_path)
-    
+
     if not video.isOpened():
         print(f"Error: Could not open video file {video_path}")
         return
     
     # Prepare to store landmarks
     all_landmarks = []
+    bearings = []
     frame_count = int(video.get(cv2.CAP_PROP_FRAME_COUNT))
     
     # Process each frame
@@ -30,11 +64,19 @@ def preprocess_video_landmarks(video_path, output_path):
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         
         # Process frame
-        results = pose.process(rgb_frame)
+        results = pose.process(rgb_frame) # get the pose data
         
         # Store landmarks (or None if no detection)
         if results.pose_landmarks:
             landmark_data = [(lm.x, lm.y, lm.z, lm.visibility) for lm in results.pose_landmarks.landmark]
+            
+            # delete 0 through 10 landmarks since they are related to face
+            # alter_landmark_data = landmark_data[11:]
+            
+            # limb_bearings = collect_bearings(landmark_data)
+            
+            # bearings.append(limb_bearings)
+            
             all_landmarks.append(landmark_data)
         else:
             all_landmarks.append(None)
@@ -49,15 +91,18 @@ def preprocess_video_landmarks(video_path, output_path):
 def calculate_similarity(landmarks1, landmarks2):
     if len(landmarks1) != len(landmarks2):
         raise ValueError("Landmark lists must have the same length")
+    
+    frame_bearings = collect_bearings(landmarks1)
+    cam_bearings = collect_bearings(landmarks2)
+    
 
     total_distance = 0
-    for lm1, lm2 in zip(landmarks1, landmarks2):
-        x1, y1, z1, _ = lm1
-        x2, y2, z2, _ = lm2
-        distance = ((x2 - x1)**2 + (y2 - y1)**2 + (z2 - z1)**2)**0.5
-        total_distance += distance
+    for frame_list, cam_list in zip(frame_bearings, cam_bearings):
+        for frame_angle, cam_angle in zip(frame_list, cam_list):
+            distance = (cam_angle - frame_angle)**2
+            total_distance += distance
 
-    average_distance = total_distance / len(landmarks1)
+    average_distance = total_distance / len(frame_bearings)
     similarity_score = 1 / (1 + average_distance)
 
     # Debug prints
@@ -128,8 +173,6 @@ def display_preprocessed_landmarks_and_webcam_with_comparison(video_path, landma
             
             # Compute similarity
             similarity = calculate_similarity(frame_landmarks, webcam_landmarks)
-            print ( webcam_landmarks)
-            print (frame_landmarks)
             if similarity is not None:
                 # Display similarity score on webcam feed
                 cv2.putText(frame_webcam, f"Similarity: {similarity:.2f}", (10, 50),
