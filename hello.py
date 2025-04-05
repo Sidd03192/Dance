@@ -2,8 +2,12 @@ import cv2
 import mediapipe as mp
 import pickle
 import numpy as np
-from mediapipe.framework.formats import landmark_pb2  # Import required for LandmarkList
+from mediapipe.framework.formats import landmark_pb2
 import math
+
+angleData = {}
+LengthData = 0.0
+
 def preprocess_video_landmarks(video_path, output_path):
     # Initialize MediaPipe Pose
     mp_pose = mp.solutions.pose
@@ -50,19 +54,35 @@ def calculate_angle(a, b, c):
     # Calculate the angle at point b given points a, b, and c
     ba = (a[0] - b[0], a[1] - b[1])
     bc = (c[0] - b[0], c[1] - b[1])
+    
+    # Calculate dot product
     dot_product = ba[0] * bc[0] + ba[1] * bc[1]
+    
+    # Calculate magnitudes
     magnitude_ba = math.sqrt(ba[0]**2 + ba[1]**2)
     magnitude_bc = math.sqrt(bc[0]**2 + bc[1]**2)
+    
+    # Avoid division by zero
     if magnitude_ba * magnitude_bc == 0:
-        return 0  
+        return 0
+    
+    # Calculate cosine of angle
     cosine_angle = dot_product / (magnitude_ba * magnitude_bc)
-    return math.degrees(math.acos(max(-1, min(1, cosine_angle))))
-
+    
+    # Ensure the value is within valid range for arccos
+    cosine_angle = max(-1, min(1, cosine_angle))
+    
+    # Convert to degrees
+    angle = math.degrees(math.acos(cosine_angle))
+    
+    return angle
 
 def calculate_similarity(landmarks1, landmarks2):
     if landmarks1 is None or landmarks2 is None:
         return 0.0
         
+    global angleData, LengthData
+    
     if len(landmarks1) != len(landmarks2):
         raise ValueError("Landmark lists must have the same length")
 
@@ -70,17 +90,17 @@ def calculate_similarity(landmarks1, landmarks2):
     # Each tuple contains three landmark indices (a, b, c) where b is the vertex
     important_angles = [
         # Right arm angle (shoulder, elbow, wrist)
-        (11, 13, 15),
+        (11, 13, 15, "Right Arm"),
         # Left arm angle (shoulder, elbow, wrist)
-        (12, 14, 16),
-        # Right leg angle (hip, knee, ankle)
-        (23, 25, 27),
-        # Left leg angle (hip, knee, ankle)
-        (24, 26, 28),
-        # Torso right side (shoulder, hip, knee)
-        (11, 23, 25),
-        # Torso left side (shoulder, hip, knee)
-        (12, 24, 26)
+        (12, 14, 16, "Left Arm"),
+        # # Right leg angle (hip, knee, ankle)
+        # (23, 25, 27, "Right Leg"),
+        # # Left leg angle (hip, knee, ankle)
+        # (24, 26, 28, "Left Leg"),
+        # # Torso right side (shoulder, hip, knee)
+        # (11, 23, 25, "Right Torso"),
+        # # Torso left side (shoulder, hip, knee)
+        # (12, 24, 26, "Left Torso")
     ]
     
     # Calculate position difference
@@ -93,9 +113,12 @@ def calculate_similarity(landmarks1, landmarks2):
             distance = ((x2 - x1)**2 + (y2 - y1)**2 + (z2 - z1)**2)**0.5
             position_diffs.append(distance)
     
-    # Calc angle differences
+    # Reset angle data dictionary
+    angleData = {}
+    
+    # Calculate angle differences
     angle_diffs = []
-    for a_idx, b_idx, c_idx in important_angles:
+    for a_idx, b_idx, c_idx, angle_name in important_angles:
         # Check if landmarks are available and visible
         if (landmarks1[a_idx][3] > 0.5 and landmarks1[b_idx][3] > 0.5 and landmarks1[c_idx][3] > 0.5 and
             landmarks2[a_idx][3] > 0.5 and landmarks2[b_idx][3] > 0.5 and landmarks2[c_idx][3] > 0.5):
@@ -114,32 +137,35 @@ def calculate_similarity(landmarks1, landmarks2):
             angle1 = calculate_angle(a1, b1, c1)
             angle2 = calculate_angle(a2, b2, c2)
             
-            # Calculate updated --> using cos
-            angle_diff = math.cos(angle1 - angle2)
-            # if that doent work try this angle_diff = min(abs(angle1 - angle2), 360 - abs(angle1 - angle2))
-
-            angle_diffs.append(angle_diff)
+            # Store angle data for debugging
+            angleData[angle_name] = {
+                "video": angle1,
+                "webcam": angle2,
+                "diff": abs(angle1 - angle2)
+            }
+            
+            # Calculate angle difference directly (absolute difference)
+            angle_diff = abs(angle1 - angle2)
+            
+            # Convert to similarity score (180° difference = 0% similar, 0° difference = 100% similar)
+            angle_similarity = 1.0 - (angle_diff / 180.0)
+            angle_diffs.append(angle_similarity)
     
     # Combine position and angle metrics
     if position_diffs and angle_diffs:
         avg_position_diff = sum(position_diffs) / len(position_diffs)
-        avg_angle_diff = sum(angle_diffs) / len(angle_diffs)
+        avg_angle_similarity = sum(angle_diffs) / len(angle_diffs)
         
-        # Non-linear transformation for position similarity
-        # Gaussian function to create a bell curve effect
-        position_similarity = np.exp(-2 * avg_position_diff**2)
-        
-        # Non-linear transformation for angle similarity
-        # Sigmoid-like behavior here too. 
-        normalized_angle_diff = avg_angle_diff / 180.0
-        angle_similarity = 1 / (1 + np.exp(10 * (normalized_angle_diff - 0.3)))
+        # Position similarity - exponential decay based on difference
+        position_similarity = np.exp(-5 * avg_position_diff**2)
+        LengthData = position_similarity
         
         # Weight the two scores (angle is more important for motion comparison)
-        final_similarity = 0.5 * position_similarity + 0.5 * angle_similarity
+        final_similarity = 0.3 * position_similarity + 0.7 * avg_angle_similarity
         
-        # Debugzzz
+        # Debug prints
         print(f"Position similarity: {position_similarity:.4f}")
-        print(f"Angle similarity: {angle_similarity:.4f}")
+        print(f"Angle similarity: {avg_angle_similarity:.4f}")
         print(f"Final similarity score: {final_similarity:.4f}")
         
         return final_similarity
@@ -163,6 +189,16 @@ def display_preprocessed_landmarks_and_webcam_with_comparison(video_path, landma
     
     # Prepare frame counter
     current_frame = 0
+    
+    # Important angles to monitor
+    important_angles = [
+        (11, 13, 15, "Right Arm"),
+        (12, 14, 16, "Left Arm"),
+        (23, 25, 27, "Right Leg"),
+        (24, 26, 28, "Left Leg"),
+        (11, 23, 25, "Right Torso"),
+        (12, 24, 26, "Left Torso")
+    ]
     
     # For similarity smoothing
     similarity_history = []
@@ -196,6 +232,27 @@ def display_preprocessed_landmarks_and_webcam_with_comparison(video_path, landma
                 mp_pose.POSE_CONNECTIONS,
                 landmark_drawing_spec=mp_drawing_styles.get_default_pose_landmarks_style()
             )
+            
+            # Display angles on video frame
+            y_offset = 30
+            for a_idx, b_idx, c_idx, angle_name in important_angles:
+                if (frame_landmarks[a_idx][3] > 0.5 and 
+                    frame_landmarks[b_idx][3] > 0.5 and 
+                    frame_landmarks[c_idx][3] > 0.5):
+                    
+                    # Get coordinates from video landmarks
+                    a = (frame_landmarks[a_idx][0], frame_landmarks[a_idx][1])
+                    b = (frame_landmarks[b_idx][0], frame_landmarks[b_idx][1])
+                    c = (frame_landmarks[c_idx][0], frame_landmarks[c_idx][1])
+                    
+                    # Calculate angle
+                    angle = calculate_angle(a, b, c)
+                    
+                    # Display angle on video frame
+                    cv2.putText(frame_video, f"{angle_name}: {angle:.1f}°", 
+                                (10, y_offset),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 1, cv2.LINE_AA)
+                    y_offset += 25
         
         # Process webcam frame for landmarks
         rgb_frame_webcam = cv2.cvtColor(frame_webcam, cv2.COLOR_BGR2RGB)
@@ -218,9 +275,32 @@ def display_preprocessed_landmarks_and_webcam_with_comparison(video_path, landma
                 
             avg_similarity = sum(similarity_history) / len(similarity_history)
             
-            # Display similarity score on webcam feed
-            cv2.putText(frame_webcam, f"Similarity: {avg_similarity:.2f}", (10, 50),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2, cv2.LINE_AA)
+            # Display similarity score on both feeds
+            cv2.putText(frame_webcam, f"Similarity: {avg_similarity:.2f}", (10, 30),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2, cv2.LINE_AA)
+            cv2.putText(frame_video, f"Similarity: {avg_similarity:.2f}", (10, 30),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2, cv2.LINE_AA)
+            
+            cv2.putText(frame_webcam, f"Position: {LengthData:.2f}", (10, 60),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2, cv2.LINE_AA)
+            cv2.putText(frame_video, f"Position: {LengthData:.2f}", (10, 60),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2, cv2.LINE_AA)
+            
+            # Display individual angle comparisons on both feeds
+            y_offset = 90
+            for angle_name, data in angleData.items():
+                text = f"{angle_name}: V:{data['video']:.1f}° W:{data['webcam']:.1f}° D:{data['diff']:.1f}°"
+                # Color code based on similarity (green for similar, red for different)
+                color = (0, 255, 0) if data['diff'] < 20 else (0, 165, 255) if data['diff'] < 45 else (0, 0, 255)
+                
+                # Add to webcam feed
+                cv2.putText(frame_webcam, text, (10, y_offset),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 1, cv2.LINE_AA)
+                # Add to video feed
+                cv2.putText(frame_video, text, (10, y_offset),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 1, cv2.LINE_AA)
+                            
+                y_offset += 25
             
             # Draw landmarks on webcam frame
             mp_drawing.draw_landmarks(
@@ -246,15 +326,10 @@ def display_preprocessed_landmarks_and_webcam_with_comparison(video_path, landma
         if current_frame >= len(all_landmarks):
             current_frame = 0
             video.set(cv2.CAP_PROP_POS_FRAMES, 0)
-    
-    # Clean up
-    video.release()
-    webcam.release()
-    cv2.destroyAllWindows()
 
 # Example usage
-video_path = "./example.mp4"
-landmarks_path = "./preprocessed_landmarks.pkl"
+video_path = "./sid.mp4"
+landmarks_path = "./ok.pkl"
 
 # Step 1: Preprocess landmarks (run once)
 preprocess_video_landmarks(video_path, landmarks_path)
