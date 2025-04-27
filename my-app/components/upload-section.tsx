@@ -1,3 +1,4 @@
+// UploadSection.tsx (React component)
 import { useState, useRef } from "react"
 import { FileVideo, Upload, CheckCircle, ArrowRight } from "lucide-react"
 import { Progress } from "@/components/ui/progress"
@@ -7,6 +8,7 @@ import { motion } from "framer-motion"
 interface UploadSectionProps {
   onVideoUploaded: (videoUrl: string) => void
 }
+
 
 export function UploadSection({ onVideoUploaded }: UploadSectionProps) {
   const [isDragging, setIsDragging] = useState(false)
@@ -20,88 +22,69 @@ export function UploadSection({ onVideoUploaded }: UploadSectionProps) {
     e.preventDefault()
     setIsDragging(true)
   }
-
-  const handleDragLeave = () => {
-    setIsDragging(false)
-  }
+  const handleDragLeave = () => setIsDragging(false)
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault()
     setIsDragging(false)
     setError(null)
-
     const files = e.dataTransfer.files
-    if (files.length > 0) {
-      if (files[0].type.startsWith("video/")) {
-        handleFileUpload(files[0])
-      } else {
-        setError("Please upload a video file")
-      }
+    if (files.length > 0 && files[0].type.startsWith("video/")) {
+      handleFileUpload(files[0])
+    } else {
+      setError("Please upload a video file")
     }
   }
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setError(null)
     const files = e.target.files
-    if (files && files.length > 0) {
-      if (files[0].type.startsWith("video/")) {
-        handleFileUpload(files[0])
-      } else {
-        setError("Please upload a video file")
-      }
+    if (files && files.length > 0 && files[0].type.startsWith("video/")) {
+      handleFileUpload(files[0])
+    } else {
+      setError("Please upload a video file")
     }
   }
 
-  // Updated function that calls the backend's upload endpoint
   const handleFileUpload = async (file: File) => {
     setIsUploading(true)
     setUploadProgress(0)
 
-    // Prepare the file upload using FormData
     const formData = new FormData()
     formData.append("video", file, file.name)
 
     try {
-      const response = await fetch("http://localhost:5000/upload", {
+      const resp = await fetch("http://localhost:5000/upload", {
         method: "POST",
         body: formData,
       })
+      if (!resp.ok) throw new Error("Upload failed " + resp.status)
+      const { video_url } = await resp.json()
 
-      // Optionally, you can simulate the progress here, or update if your backend supports it.
-      // For now, we simply set progress to 100 upon completion.
+      // Fetch the processed video as a Blob
+      const mp4resp = await fetch(video_url)
+      if (!mp4resp.ok) throw new Error("Could not fetch processed video")
+      const mp4blob = await mp4resp.blob()
+
+      // Create a blob URL for the video
+      const blobUrl = URL.createObjectURL(mp4blob)
+
       setUploadProgress(100)
-
-      const result = await response.json()
-      if (!response.ok) {
-        throw new Error(result.error)
-      }
-
-      // The backend should return a processed (annotated) video URL.
-      setPreviewUrl(result.video_url)
-      // Trigger the callback to move to the next step
-      onVideoUploaded(result.video_url)
+      setPreviewUrl(blobUrl)
     } catch (err: any) {
-      console.error("Error uploading and processing video:", err)
-      setError("Failed to process video: " + err.message)
+      console.error(err)
+      setError("Failed: " + err.message)
     } finally {
       setIsUploading(false)
     }
   }
 
-  const triggerFileInput = () => {
-    if (fileInputRef.current) {
-      fileInputRef.current.click()
-    }
-  }
-
-  // For demo purposes: allow skipping to next step
-  const skipToNext = () => {
-    onVideoUploaded("/placeholder.svg?height=720&width=1280")
-  }
+  const triggerFileInput = () => fileInputRef.current?.click()
+  const skipToNext = () => onVideoUploaded("/placeholder.svg")
 
   const continueToNextStep = () => {
     if (previewUrl) {
-      onVideoUploaded(previewUrl)
+      onVideoUploaded(previewUrl) // Call the callback only when the user clicks "Continue"
     }
   }
 
@@ -185,17 +168,6 @@ export function UploadSection({ onVideoUploaded }: UploadSectionProps) {
               <h3 className="text-lg font-jakarta font-medium text-[#333333] mb-6">
                 Uploading and processing video...
               </h3>
-              {previewUrl && (
-                <div className="w-full max-w-md mb-6 aspect-video rounded-lg overflow-hidden bg-black">
-                  <video
-                    src={previewUrl}
-                    className="w-full h-full object-contain"
-                    controls={false}
-                    muted
-                    autoPlay={false}
-                  />
-                </div>
-              )}
               <div className="w-full max-w-md mb-4">
                 <Progress value={uploadProgress} className="h-1" />
               </div>
@@ -218,8 +190,13 @@ export function UploadSection({ onVideoUploaded }: UploadSectionProps) {
                 Preprocessed Video Preview
               </h3>
               <div className="w-full max-w-md mb-6 aspect-video rounded-lg overflow-hidden bg-black">
-                {/* Display the preprocessed (annotated) video */}
-                <video src={previewUrl} className="w-full h-full object-contain" controls autoPlay={false} />
+                <video
+                  src={previewUrl}
+                  className="w-full h-full object-contain"
+                  controls
+                  autoPlay={!isUploading}
+                  muted
+                />
               </div>
               <Button
                 onClick={continueToNextStep}
@@ -242,7 +219,6 @@ export function UploadSection({ onVideoUploaded }: UploadSectionProps) {
         <p className="text-xs text-[#999999]">
           Supported formats: MP4, MOV, AVI (max 100MB)
         </p>
-        {/* Skip button for demo purposes */}
         <Button
           onClick={skipToNext}
           variant="ghost"

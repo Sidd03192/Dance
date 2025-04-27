@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "class-variance-authority": "^0.7.1",
+    "firebase": "^11.6.0",
     "framer-motion": "^12.7.3",
     "lucide-react": "^0.488.0",
     "next": "15.2.4",

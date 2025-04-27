@@ -1,0 +1,213 @@
+// RecordSection.tsx
+"use client"
+
+import React, { useState, useRef, useEffect } from "react"
+import { Button } from "@/components/ui/button"
+import { Video, Camera, StopCircle, RotateCcw, ArrowRight } from "lucide-react"
+
+interface RecordSectionProps {
+  referenceVideo: string
+  onVideoRecorded: (videoUrl: string) => void
+}
+
+export function RecordSection({ referenceVideo, onVideoRecorded }: RecordSectionProps) {
+  const [stream, setStream] = useState<MediaStream | null>(null)
+  const [isRecording, setIsRecording] = useState(false)
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
+  const [countdown, setCountdown] = useState(0)
+  const [recordingTime, setRecordingTime] = useState(0)
+
+  const liveRef    = useRef<HTMLVideoElement>(null)
+  const previewRef = useRef<HTMLVideoElement>(null)
+  const recorderRef= useRef<MediaRecorder>()
+  const chunksRef  = useRef<Blob[]>([])
+
+  // Attach stream to live <video> when it arrives
+  useEffect(() => {
+    if (stream && liveRef.current) {
+      liveRef.current.srcObject = stream
+      liveRef.current.play().catch(console.error)
+    }
+  }, [stream])
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      stream?.getTracks().forEach((t) => t.stop())
+      if (previewUrl) URL.revokeObjectURL(previewUrl)
+    }
+  }, [stream, previewUrl])
+
+  // Countdown + recording timer
+  useEffect(() => {
+    let timer: NodeJS.Timeout
+    if (countdown > 0) {
+      timer = setTimeout(() => setCountdown(countdown - 1), 1000)
+    } else if (countdown === 0 && isRecording) {
+      timer = setInterval(() => setRecordingTime((t) => t + 1), 1000)
+    }
+    return () => clearTimeout(timer)
+  }, [countdown, isRecording])
+
+  // 1) Turn on camera
+  const startCamera = async () => {
+    if (stream) return
+    try {
+      const s = await navigator.mediaDevices.getUserMedia({ video: true, audio: true })
+      setStream(s)
+      // prepare recorder
+      const mr = new MediaRecorder(s)
+      recorderRef.current = mr
+      mr.ondataavailable = (e) => {
+        if (e.data.size) chunksRef.current.push(e.data)
+      }
+      mr.onstop = () => {
+        const blob = new Blob(chunksRef.current, { type: "video/webm" })
+        const url  = URL.createObjectURL(blob)
+        setPreviewUrl(url)
+      }
+    } catch (err) {
+      console.error("Camera error:", err)
+    }
+  }
+
+  // 2) Start recording (with 3‑2‑1 countdown)
+  const startRecording = async () => {
+    if (!stream) {
+      await startCamera()
+      return
+    }
+    setCountdown(3)
+    setRecordingTime(0)
+    setPreviewUrl(null)
+    // After countdown, begin recording
+    setTimeout(() => {
+      recorderRef.current!.start()
+      setIsRecording(true)
+    }, 3000)
+  }
+
+  // 3) Stop recording
+  const stopRecording = () => {
+    recorderRef.current!.stop()
+    setIsRecording(false)
+  }
+
+  // 4) Re‑record (go back to live)
+  const reRecord = () => {
+    setPreviewUrl(null)
+    chunksRef.current = []
+    setRecordingTime(0)
+    if (liveRef.current && stream) {
+      liveRef.current.srcObject = stream
+      liveRef.current.play().catch(console.error)
+    }
+  }
+
+  // 5) Accept and continue
+  const continueToCompare = () => {
+    if (previewUrl) onVideoRecorded(previewUrl)
+  }
+
+  // Skip for demo
+  const skip = () => onVideoRecorded("/placeholder.svg")
+
+  // Format mm:ss
+  const fmt = (sec: number) => {
+    const m = Math.floor(sec / 60).toString().padStart(2, "0")
+    const s = (sec % 60).toString().padStart(2, "0")
+    return `${m}:${s}`
+  }
+
+  return (
+    <div className="max-w-4xl mx-auto">
+      {/* Header */}
+      <div className="text-center mb-8">
+        <h2 className="text-3xl font-semibold">Record Your Performance</h2>
+        <p className="text-gray-600">Watch the reference video and record yourself performing the same dance</p>
+      </div>
+
+      {/* Videos */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+        {/* Reference */}
+        <div className="aspect-video bg-black rounded-lg overflow-hidden">
+          <video
+            src={referenceVideo}
+            controls
+            className="w-full h-full object-cover"
+          />
+          <div className="absolute bottom-2 left-2 bg-black/50 text-white text-xs px-2 rounded">Reference</div>
+        </div>
+
+        {/* Live or Preview */}
+        <div className="aspect-video bg-black rounded-lg overflow-hidden relative">
+          {!previewUrl ? (
+            <video
+              ref={liveRef}
+              muted
+              className="w-full h-full object-cover"
+            />
+          ) : (
+            <video
+              ref={previewRef}
+              src={previewUrl}
+              controls
+              className="w-full h-full object-cover"
+            />
+          )}
+
+          {/* Countdown overlay */}
+          {countdown > 0 && (
+            <div className="absolute inset-0 flex items-center justify-center bg-black/50 text-white text-6xl">
+              {countdown}
+            </div>
+          )}
+
+          {/* Recording timer badge */}
+          {isRecording && countdown === 0 && (
+            <div className="absolute top-2 left-2 bg-red-600 text-white text-xs px-2 rounded flex items-center gap-1">
+              <div className="w-2 h-2 bg-white rounded-full animate-pulse" /> {fmt(recordingTime)}
+            </div>
+          )}
+
+          <div className="absolute bottom-2 left-2 bg-black/50 text-white text-xs px-2 rounded">
+            You
+          </div>
+        </div>
+      </div>
+
+      {/* Controls */}
+      <div className="flex justify-center gap-4 mb-4">
+        {!stream ? (
+          <Button onClick={startCamera} className="bg-purple-600 text-white">
+            <Camera className="mr-2" /> Start Camera
+          </Button>
+        ) : !isRecording && !previewUrl ? (
+          <Button onClick={startRecording} className="bg-green-600 text-white">
+            <Video className="mr-2" /> Start Recording
+          </Button>
+        ) : isRecording ? (
+          <Button onClick={stopRecording} className="bg-red-600 text-white">
+            <StopCircle className="mr-2" /> Stop Recording
+          </Button>
+        ) : (
+          <>
+            <Button onClick={reRecord} variant="outline">
+              <RotateCcw className="mr-2" /> Re-record
+            </Button>
+            <Button onClick={continueToCompare} className="bg-blue-600 text-white">
+              <ArrowRight className="mr-2" /> Continue
+            </Button>
+          </>
+        )}
+      </div>
+
+      {/* Skip */}
+      <div className="text-center">
+        <Button variant="ghost" onClick={skip} className="underline text-sm text-gray-500">
+          Skip recording (demo only)
+        </Button>
+      </div>
+    </div>
+  )
+}

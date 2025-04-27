@@ -1,3 +1,6 @@
+// VideoPlayer.tsx
+import { useEffect, useRef } from "react"
+
 interface VideoPlayerProps {
   src: string
   isPlaying: boolean
@@ -5,19 +8,28 @@ interface VideoPlayerProps {
 }
 
 export function VideoPlayer({ src, isPlaying, label }: VideoPlayerProps) {
+  const ref = useRef<HTMLVideoElement>(null)
+
+  // play / pause when isPlaying changes
+  useEffect(() => {
+    if (!ref.current) return
+    if (isPlaying) ref.current.play().catch(() => {})
+    else ref.current.pause()
+  }, [isPlaying])
+
   return (
     <div className="relative w-full h-full">
-      <video
-        src={src}
-        className="w-full h-full object-contain"
-        controls
-        autoPlay={isPlaying}
-      />
       {label && (
-        <div className="absolute bottom-4 left-4 bg-black/70 text-white px-3 py-1 rounded-md text-sm">
+        <span className="absolute top-2 left-2 bg-black bg-opacity-50 text-white px-2 rounded">
           {label}
-        </div>
+        </span>
       )}
+      <video
+        ref={ref}
+        src={src}
+        controls
+        className="w-full h-full object-contain"
+      />
     </div>
-  );
+  )
 }

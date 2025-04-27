@@ -1,6 +1,7 @@
+// VideoRecorder.tsx
 "use client"
 
-import { useState } from "react"
+import { useRef, useState, useEffect } from "react"
 import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Video, StopCircle, RotateCcw, CheckCircle } from "lucide-react"
@@ -10,98 +11,118 @@ interface VideoRecorderProps {
 }
 
 export function VideoRecorder({ onVideoRecorded }: VideoRecorderProps) {
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const recorderRef = useRef<MediaRecorder | null>(null)
+  const [stream, setStream] = useState<MediaStream | null>(null)
+  const [chunks, setChunks] = useState<Blob[]>([])
+  const [isCameraOn, setIsCameraOn] = useState(false)
   const [isRecording, setIsRecording] = useState(false)
-  const [isPreviewing, setIsPreviewing] = useState(false)
-  const [recordingTime, setRecordingTime] = useState(0)
+  const [isPreview, setIsPreview] = useState(false)
+  const [recordedUrl, setRecordedUrl] = useState<string | null>(null)
 
-  // In a real app, this would be the actual recorded video
-  const demoVideoUrl = "/placeholder.svg?height=720&width=1280"
+  // start the camera preview
+  const startCamera = async () => {
+    if (isCameraOn) return
+    const s = await navigator.mediaDevices.getUserMedia({ video: true, audio: true })
+    setStream(s)
+    if (videoRef.current) videoRef.current.srcObject = s
+    const mr = new MediaRecorder(s)
+    recorderRef.current = mr
+    mr.ondataavailable = (e) => {
+      if (e.data.size > 0) setChunks((c) => [...c, e.data])
+    }
+    mr.onstop = () => {
+      const blob = new Blob(chunks, { type: "video/webm" })
+      const url  = URL.createObjectURL(blob)
+      setRecordedUrl(url)
+      setIsPreview(true)
+    }
+    setIsCameraOn(true)
+  }
 
   const startRecording = () => {
+    if (!recorderRef.current) return
+    setChunks([])
+    recorderRef.current.start()
     setIsRecording(true)
-    // In a real app, this would start the camera recording
-
-    // Simulate recording time counter
-    const interval = setInterval(() => {
-      setRecordingTime((prev) => prev + 1)
-    }, 1000)
-
-    // Simulate stopping after 5 seconds
-    setTimeout(() => {
-      clearInterval(interval)
-      stopRecording()
-    }, 5000)
+    setIsPreview(false)
   }
 
   const stopRecording = () => {
+    recorderRef.current?.stop()
     setIsRecording(false)
-    setIsPreviewing(true)
-    // In a real app, this would stop the recording and save the video
   }
 
-  const resetRecording = () => {
-    setIsPreviewing(false)
-    setRecordingTime(0)
-    // In a real app, this would reset the recording
+  const reRecord = () => {
+    setIsPreview(false)
+    setRecordedUrl(null)
+    if (videoRef.current && stream) videoRef.current.srcObject = stream
   }
 
-  const acceptRecording = () => {
-    // In a real app, this would be the URL of the recorded video
-    onVideoRecorded(demoVideoUrl)
+  const acceptVideo = () => {
+    if (recordedUrl) onVideoRecorded(recordedUrl)
   }
 
-  const formatTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60)
-    const secs = seconds % 60
-    return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`
-  }
+  // cleanup on unmount
+  useEffect(() => {
+    return () => {
+      stream?.getTracks().forEach((t) => t.stop())
+    }
+  }, [stream])
 
   return (
     <Card className="overflow-hidden">
       <div className="aspect-video bg-gray-900 relative flex items-center justify-center">
-        {!isRecording && !isPreviewing ? (
-          <div className="text-center p-6">
-            <Video className="h-12 w-12 text-purple-300 mx-auto mb-4" />
-            <h3 className="text-white text-lg font-medium mb-2">Ready to record</h3>
-            <p className="text-gray-400 text-sm mb-4">Position yourself in frame and press record when ready</p>
-            <Button onClick={startRecording} className="bg-purple-500 hover:bg-purple-600 text-white">
-              Start Recording
-            </Button>
-          </div>
-        ) : (
-          // This would be a video element in a real app
-          <div className="w-full h-full bg-gray-800 flex items-center justify-center">
-            <div className="text-white text-lg">{isRecording ? "Recording..." : "Preview"}</div>
-          </div>
+        <video
+          ref={videoRef}
+          autoPlay={!isPreview}
+          muted={!isPreview}
+          controls={isPreview}
+          playsInline
+          className="w-full h-full object-cover"
+        />
+
+        {!isCameraOn && (
+          <Button
+            onClick={startCamera}
+            className="absolute bg-purple-500 text-white px-4 py-2 rounded-full"
+          >
+            <Video className="mr-2" /> Start Camera
+          </Button>
         )}
 
-        {isRecording && (
-          <div className="absolute top-4 left-4 bg-red-500 text-white px-3 py-1 rounded-full flex items-center gap-2 text-sm">
-            <div className="w-2 h-2 rounded-full bg-white animate-pulse" />
-            {formatTime(recordingTime)}
-          </div>
+        {isCameraOn && !isRecording && !isPreview && (
+          <Button
+            onClick={startRecording}
+            className="absolute bg-green-500 text-white px-4 py-2 rounded-full"
+          >
+            <Video className="mr-2" /> Start Recording
+          </Button>
         )}
 
         {isRecording && (
           <Button
-            variant="outline"
-            size="icon"
-            className="absolute bottom-4 left-1/2 transform -translate-x-1/2 bg-white text-red-500 hover:bg-gray-100 rounded-full h-12 w-12"
             onClick={stopRecording}
+            className="absolute bottom-4 bg-red-500 text-white p-3 rounded-full"
           >
-            <StopCircle className="h-6 w-6" />
+            <StopCircle />
           </Button>
         )}
 
-        {isPreviewing && (
-          <div className="absolute bottom-4 left-0 right-0 flex justify-center gap-4">
-            <Button variant="outline" className="bg-white text-gray-700 hover:bg-gray-100" onClick={resetRecording}>
-              <RotateCcw className="mr-2 h-4 w-4" />
-              Re-record
+        {isPreview && (
+          <div className="absolute bottom-4 flex gap-4">
+            <Button
+              variant="outline"
+              onClick={reRecord}
+              className="bg-white text-gray-700"
+            >
+              <RotateCcw className="mr-2" /> Re-record
             </Button>
-            <Button className="bg-purple-500 hover:bg-purple-600 text-white" onClick={acceptRecording}>
-              <CheckCircle className="mr-2 h-4 w-4" />
-              Use This Video
+            <Button
+              onClick={acceptVideo}
+              className="bg-blue-500 text-white"
+            >
+              <CheckCircle className="mr-2" /> Use This Video
             </Button>
           </div>
         )}

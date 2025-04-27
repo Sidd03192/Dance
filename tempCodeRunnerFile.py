@@ -1,1 +1,1 @@
-        frame_cam = cv2.resize(frame_cam, (frame_vid.shape[1], desired_height))
+def display_preprocessed_landmarks_and_webcam_with_comparison(video_path, landmarks_path):

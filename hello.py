@@ -4,7 +4,7 @@ import pickle
 import numpy as np
 import math
 from mediapipe.framework.formats import landmark_pb2
-
+import os
 angleData = {}
 LengthData = 0.0
 
@@ -19,21 +19,35 @@ def compute_body_scale(landmarks):
     return 1.0
 
 def preprocess_and_annotate_video(video_path, output_video_path, landmark_output_path):
+    """
+    Reads video_path, runs MediaPipe pose + draws landmarks,
+    writes out a WebM/VP8 to <base>.webm and pickles landmarks.
+    Returns the full path to the .webm file.
+    """
     mp_pose = mp.solutions.pose
     pose    = mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5)
     drawer  = mp.solutions.drawing_utils
     styles  = mp.solutions.drawing_styles
-
+    
     vid = cv2.VideoCapture(video_path)
     if not vid.isOpened():
         raise IOError(f"Cannot open {video_path}")
 
     w = int(vid.get(cv2.CAP_PROP_FRAME_WIDTH))
     h = int(vid.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    fps = vid.get(cv2.CAP_PROP_FPS)
-    out = cv2.VideoWriter(output_video_path,
-                          cv2.VideoWriter_fourcc(*'mp4v'),
-                          fps, (w, h))
+    fps = vid.get(cv2.CAP_PROP_FPS) or 30
+
+    # change extension to .webm
+    base, _ = os.path.splitext(output_video_path)
+    webm_path = base + ".webm"
+
+    # VP8 fourcc
+    out = cv2.VideoWriter(
+        webm_path,
+        cv2.VideoWriter_fourcc('V','P','8','0'),
+        fps,
+        (w, h)
+    )
 
     all_landmarks = []
     while True:
@@ -55,12 +69,28 @@ def preprocess_and_annotate_video(video_path, output_video_path, landmark_output
         else:
             all_landmarks.append(None)
         out.write(frame)
-
+    
     vid.release()
     out.release()
+
     with open(landmark_output_path, 'wb') as f:
         pickle.dump(all_landmarks, f)
 
+    return webm_path
+def draw_lines(frame, pose_landmarks):
+    """
+    Draw exactly the same landmarks+connections you use
+    in preprocess_and_annotate_video, but on a live frame.
+    """
+    mp_drawing = mp.solutions.drawing_utils
+    mp_styles  = mp.solutions.drawing_styles
+
+    mp_drawing.draw_landmarks(
+        frame,
+        pose_landmarks,
+        mp.solutions.pose.POSE_CONNECTIONS,
+        landmark_drawing_spec=mp_styles.get_default_pose_landmarks_style()
+    )
 def calculate_angle(a, b, c):
     ba = (a[0]-b[0], a[1]-b[1])
     bc = (c[0]-b[0], c[1]-b[1])
@@ -128,12 +158,14 @@ def generate_feedback(ad, ls, thresh=25):
 
 def draw_colored_skeleton(frame, lmlist, score):
     h, w = frame.shape[:2]
-    if score >= 0.8:
-        col = (0,255,0)
-    elif score >= 0.5:
-        col = (0,255,255)
-    else:
-        col = (0,0,255)
+
+    # map each connection to its joint name (if any)
+    limb_to_part = {
+        (11,13): "Left Elbow",    (13,15): "Left Elbow",
+        (12,14): "Right Elbow",   (14,16): "Right Elbow",
+        (13,11): "Left Shoulder", (11,23): "Left Shoulder",
+        (14,12): "Right Shoulder",(12,24): "Right Shoulder",
+    }
 
     for a, b in mp.solutions.pose.POSE_CONNECTIONS:
         A = lmlist.landmark[a]
@@ -141,6 +173,63 @@ def draw_colored_skeleton(frame, lmlist, score):
         if A.visibility > 0.5 and B.visibility > 0.5:
             x1, y1 = int(A.x*w), int(A.y*h)
             x2, y2 = int(B.x*w), int(B.y*h)
+
+            part = limb_to_part.get((a,b)) or limb_to_part.get((b,a))
+            if part and part in angleData:
+                diff = angleData[part]["diff"]
+
+                # give shoulders a more lenient green zone
+                if "Shoulder" in part:
+                    green_thresh  =  fifty = 50    # up to 50° is green
+                    yellow_thresh = sixty = 80     # 50–80° is yellow
+                else:
+                    green_thresh  = 35            # elbows still 32°
+                    yellow_thresh = 45            # elbows 32–45°
+
+                if diff < green_thresh:
+                    col = (0,255,0)       # green
+                elif diff < yellow_thresh:
+                    col = (0,165,255)     # yellow‐orange
+                else:
+                    col = (0,0,255)       # red
+            else:
+                col = (200,200,200)      # neutral gray
+
+            cv2.line(frame, (x1,y1), (x2,y2), col, 2)
+
+    h, w = frame.shape[:2]
+
+    # map each connection to its joint name (if any)
+    limb_to_part = {
+        (11,13): "Left Elbow",   (13,15): "Left Elbow",
+        (12,14): "Right Elbow",  (14,16): "Right Elbow",
+        (13,11): "Left Shoulder",(11,23): "Left Shoulder",
+        (14,12): "Right Shoulder",(12,24): "Right Shoulder",
+    }
+
+    for a, b in mp.solutions.pose.POSE_CONNECTIONS:
+        # pixel coords
+        A = lmlist.landmark[a]
+        B = lmlist.landmark[b]
+        if A.visibility > 0.5 and B.visibility > 0.5:
+            x1, y1 = int(A.x*w), int(A.y*h)
+            x2, y2 = int(B.x*w), int(B.y*h)
+
+            # see if this bone is part of an “important” joint
+            part = limb_to_part.get((a,b)) or limb_to_part.get((b,a))
+            if part and part in angleData:
+                diff = angleData[part]["diff"]
+                # green if <20°, yellow if <45°, red otherwise
+                if diff < 32:
+                    col = (0,255,0)
+                elif diff < 45:
+                    col = (0,165,255)
+                else:
+                    col = (0,0,255)
+            else:
+                # neutral gray for non‐tracked bones
+                col = (200,200,200)
+
             cv2.line(frame, (x1,y1), (x2,y2), col, 2)
 
 def display_preprocessed_landmarks_and_webcam_with_comparison(video_path, landmarks_path):
@@ -162,12 +251,13 @@ def display_preprocessed_landmarks_and_webcam_with_comparison(video_path, landma
     while True:
         ok1, fv = vid.read()
         ok2, fc = cam.read()
-        
-
         # Reference frame
-        fv = resize_to_height(fv, H)
+        # fv = cv2.flip(fv, 1)
+        # fv = cv2.resize(fv, (int(fv.shape[1] * REF_SCALE), H))
+        TARGET_HEIGHT = 480
         fv = cv2.flip(fv, 1)
-        fv = cv2.resize(fv, (int(fv.shape[1] * REF_SCALE), H))
+        fv = resize_to_height(fv, TARGET_HEIGHT)
+
 
         raw = all_lm[idx]
         ref_list = None
@@ -180,8 +270,10 @@ def display_preprocessed_landmarks_and_webcam_with_comparison(video_path, landma
 
         # Webcam frame
         fc = cv2.flip(fc, 1)
-        fc = resize_to_height(fc, H)
-        fc = cv2.resize(fc, (int(fc.shape[1] * CAM_SCALE), H))
+        # fc = resize_to_height(fc, H)
+        # fc = cv2.resize(fc, (int(fc.shape[1] * CAM_SCALE), H))
+        # fc = resize_to_height(fc, H)
+
         rgb = cv2.cvtColor(fc, cv2.COLOR_BGR2RGB)
         res = pose.process(rgb)
 
@@ -215,25 +307,25 @@ def display_preprocessed_landmarks_and_webcam_with_comparison(video_path, landma
                         (lm[b].x, lm[b].y),
                         (lm[c].x, lm[c].y)
                     )
-                    cv2.putText(fv, f"{name}: {angle:.1f}°",
-                                (10, y_off),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,0,0), 1, cv2.LINE_AA)
+                    # cv2.putText(fv, f"{name}: {angle:.1f}°",
+                    #             (10, y_off),
+                    #             cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,0,0), 1, cv2.LINE_AA)
                     y_off += 25
 
         # Draw live stats & angles
         if res.pose_landmarks and ref_list:
-            cv2.putText(fc, f"Sim: {avg:.2f}", (10,30),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,255,0), 2, cv2.LINE_AA)
-            cv2.putText(fc, f"Pos: {LengthData:.2f}", (10,60),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,255,0), 2, cv2.LINE_AA)
+            # cv2.putText(fc, f"Sim: {avg:.2f}", (10,30),
+            #             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,255,0), 2, cv2.LINE_AA)
+            # cv2.putText(fc, f"Pos: {LengthData:.2f}", (10,60),
+            #             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,255,0), 2, cv2.LINE_AA)
             drawer = mp.solutions.drawing_utils
             drawer.draw_landmarks(fc, res.pose_landmarks, mp_pose.POSE_CONNECTIONS)
             y_off = 90
             for nm, d in angleData.items():
-                col = (0,255,0) if d['diff']<20 else (0,165,255) if d['diff']<45 else (0,0,255)
-                txt = f"{nm}: V{d['video']:.1f} W{d['webcam']:.1f} D{d['diff']:.1f}"
-                cv2.putText(fc, txt, (10, y_off),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, col, 1, cv2.LINE_AA)
+                # col = (0,255,0) if d['diff']<20 else (0,165,255) if d['diff']<45 else (0,0,255)
+                # txt = f"{nm}: V{d['video']:.1f} W{d['webcam']:.1f} D{d['diff']:.1f}"
+                # cv2.putText(fc, txt, (10, y_off),
+                #             cv2.FONT_HERSHEY_SIMPLEX, 0.6, col, 1, cv2.LINE_AA)
                 y_off += 25
 
         # Combine and feedback
@@ -245,24 +337,30 @@ def display_preprocessed_landmarks_and_webcam_with_comparison(video_path, landma
         else:
             fb = "Wrong"
         ts, _ = cv2.getTextSize(fb, cv2.FONT_HERSHEY_SIMPLEX, 1.0, 2)
-        x = (combined.shape[1] - ts[0]) // 2
-        cv2.putText(combined, fb, (x, 50),
-                    cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0,0,255), 2, cv2.LINE_AA)
+        x = (combined.shape[1] - ts[0]) 
+        # cv2.putText(combined, fb, (x, 50),
+        #             cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0,0,255), 2, cv2.LINE_AA)
 
         for i, msg in enumerate(generate_feedback(angleData, LengthData)):
             cv2.putText(combined, msg, (10, combined.shape[0] - 100 + 30*i),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,255,0), 2, cv2.LINE_AA)
 
         cv2.imshow("Comparison", combined)
+        cv2.imshow("Reference", fv)
+        cv2.imshow("Webcam",    fc)
+
+
+
+
+
+
         if cv2.waitKey(30) & 0xFF == ord('q'):
             break
 
         idx = (idx + 1) % len(all_lm)
 
 
-    vid.release()
-    cam.release()
-    cv2.destroyAllWindows()
+    
 if __name__ == "__main__":
-    preprocess_and_annotate_video("sid.mp4", "annotated_video.mp4", "ok.pkl")
-    display_preprocessed_landmarks_and_webcam_with_comparison("sid.mp4", "ok.pkl")
+    preprocess_and_annotate_video("advfinal1.mp4", "annotated_video.mp4", "ok.pkl")
+    display_preprocessed_landmarks_and_webcam_with_comparison("advfinal1.mp4", "ok.pkl") #update these two
