@@ -159,7 +159,6 @@ def generate_feedback(ad, ls, thresh=25):
 def draw_colored_skeleton(frame, lmlist, score):
     h, w = frame.shape[:2]
 
-    # map each connection to its joint name (if any)
     limb_to_part = {
         (11,13): "Left Elbow",    (13,15): "Left Elbow",
         (12,14): "Right Elbow",   (14,16): "Right Elbow",
@@ -183,8 +182,8 @@ def draw_colored_skeleton(frame, lmlist, score):
                     green_thresh  =  fifty = 50    # up to 50° is green
                     yellow_thresh = sixty = 80     # 50–80° is yellow
                 else:
-                    green_thresh  = 35            # elbows still 32°
-                    yellow_thresh = 45            # elbows 32–45°
+                    green_thresh  = 40            # elbows still 32°
+                    yellow_thresh = 55           # elbows 32–45°
 
                 if diff < green_thresh:
                     col = (0,255,0)       # green
@@ -215,7 +214,6 @@ def draw_colored_skeleton(frame, lmlist, score):
             x1, y1 = int(A.x*w), int(A.y*h)
             x2, y2 = int(B.x*w), int(B.y*h)
 
-            # see if this bone is part of an “important” joint
             part = limb_to_part.get((a,b)) or limb_to_part.get((b,a))
             if part and part in angleData:
                 diff = angleData[part]["diff"]
@@ -227,7 +225,6 @@ def draw_colored_skeleton(frame, lmlist, score):
                 else:
                     col = (0,0,255)
             else:
-                # neutral gray for non‐tracked bones
                 col = (200,200,200)
 
             cv2.line(frame, (x1,y1), (x2,y2), col, 2)
